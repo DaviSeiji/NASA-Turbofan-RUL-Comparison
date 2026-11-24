@@ -2,18 +2,19 @@ import argparse
 import importlib.metadata
 import logging
 import os
-import warnings
+import platform
+from math import prod
 from pathlib import Path
+from time import perf_counter
 
 
-# Silencia avisos antes de importar TensorFlow, mantendo as mensagens de erro.
+# Silencia logs informativos, mas mantém warnings e erros visíveis.
 def configure_output():
 
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-    warnings.filterwarnings('ignore')
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
     for name in ('tensorflow', 'absl', 'optuna'):
-        logging.getLogger(name).setLevel(logging.ERROR)
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 configure_output()
@@ -110,25 +111,94 @@ def callbacks(patience, trial=None, epoch_history=None):
     return result
 
 
-# Treina uma configuração usando treino e validação separados.
-def fit_once(data, model_name, params, seed, epochs, patience, trial=None, epoch_history=None):
+# Conta os parâmetros e registra o ambiente usado para comparar os tempos depois.
+def training_metadata(model, data, params, seed, epochs, patience):
+
+    trainable = sum(prod(int(size) for size in weight.shape) for weight in model.trainable_weights)
+    total = int(model.count_params())
+    devices = [
+        {
+            'name': device.name,
+            'type': device.device_type,
+            'description': tf.config.experimental.get_device_details(device).get('device_name'),
+        }
+        for device in tf.config.list_physical_devices()
+    ]
+
+    return {
+        'trainable_parameters': int(trainable),
+        'non_trainable_parameters': total - int(trainable),
+        'total_parameters': total,
+        'seed': seed,
+        'batch_size': params['batch_size'],
+        'max_epochs': epochs,
+        'patience': patience,
+        'training_samples': len(data['train']['X']),
+        'validation_samples': len(data['validation']['X']),
+        'timing_scope': 'model.fit including validation and callbacks; excluding build, data loading and save',
+        'environment': {
+            'platform': platform.platform(),
+            'processor': platform.processor(),
+            'python': platform.python_version(),
+            'visible_devices': devices,
+            'intra_op_threads': tf.config.threading.get_intra_op_parallelism_threads(),
+            'inter_op_threads': tf.config.threading.get_inter_op_parallelism_threads(),
+            'deterministic_ops': True,
+        },
+    }
+
+
+# Acrescenta ao registro o número de épocas e as métricas da melhor validação.
+def update_training_metrics(info, history):
+
+    validation = np.asarray(history.get('val_loss', []), dtype=float)
+    info['epochs_completed'] = len(validation)
+    info['mean_epoch_seconds'] = info['fit_seconds'] / len(validation) if len(validation) else None
+    valid_epochs = np.flatnonzero(np.isfinite(validation))
+
+    if len(valid_epochs):
+        best = int(valid_epochs[np.argmin(validation[valid_epochs])])
+        training = history.get('loss', [])
+        training_mse = float(training[best]) if best < len(training) else float('nan')
+        info['best_epoch'] = best + 1
+        info['training_mse_at_best_validation'] = training_mse if np.isfinite(training_mse) else None
+        info['best_validation_mse'] = float(validation[best])
+
+
+# Treina uma configuração e mede seu tempo, sem incluir construção ou salvamento.
+def fit_once(
+    data, model_name, params, seed, epochs, patience, trial=None,
+    epoch_history=None, training_info=None,
+):
 
     prepare_runtime(seed)
+    epoch_history = epoch_history if epoch_history is not None else {}
+    training_info = training_info if training_info is not None else {}
 
     try:
         train, val = data['train'], data['validation']
         model = build_model(model_name, train['X'].shape[1:], params)
         assert_model_shape(model, train['X'].shape[1:])
-        history = model.fit(
-            train['X'],
-            train['y'],
-            validation_data=(val['X'], val['y']),
-            epochs=epochs,
-            batch_size=params['batch_size'],
-            callbacks=callbacks(patience, trial, epoch_history),
-            shuffle=True,
-            verbose=0,
-        ).history
+        training_info.update(training_metadata(model, data, params, seed, epochs, patience))
+        training_callbacks = callbacks(patience, trial, epoch_history)
+        history = None
+        started = perf_counter()
+
+        try:
+            history = model.fit(
+                train['X'],
+                train['y'],
+                validation_data=(val['X'], val['y']),
+                epochs=epochs,
+                batch_size=params['batch_size'],
+                callbacks=training_callbacks,
+                shuffle=True,
+                verbose=0,
+            ).history
+        finally:
+            training_info['fit_seconds'] = float(perf_counter() - started)
+            update_training_metrics(training_info, history if history is not None else epoch_history)
+
         history = {key: [float(v) for v in values] for key, values in history.items()}
 
         if not history.get('val_loss') or not np.isfinite(history['val_loss']).all():
@@ -140,13 +210,24 @@ def fit_once(data, model_name, params, seed, epochs, patience, trial=None, epoch
 
 
 # Mostra a época de parada e os MSEs de treino e validação da melhor época.
-def print_training_summary(label, status, history, max_epochs):
+def print_training_summary(label, status, history, max_epochs, training_info=None):
+
+    efficiency = ''
+
+    if training_info:
+        if 'fit_seconds' in training_info:
+            efficiency += f' | tempo: {training_info["fit_seconds"]:.2f}s'
+        if 'trainable_parameters' in training_info:
+            efficiency += f' | parâmetros treináveis: {training_info["trainable_parameters"]}'
 
     validation = np.asarray(history.get('val_loss', []), dtype=float)
     valid_epochs = np.flatnonzero(np.isfinite(validation))
 
     if not len(valid_epochs):
-        print(f'{label} {status} | épocas: {len(validation)}/{max_epochs} | MSE indisponível', flush=True)
+        print(
+            f'{label} {status} | épocas: {len(validation)}/{max_epochs} | MSE indisponível{efficiency}',
+            flush=True,
+        )
         return
 
     best = int(valid_epochs[np.argmin(validation[valid_epochs])])
@@ -155,7 +236,7 @@ def print_training_summary(label, status, history, max_epochs):
     print(
         f'{label} {status} | parou na época {len(validation)}/{max_epochs}'
         f' | melhor época: {best + 1}'
-        f' | MSE treino: {training_mse:.4f} | MSE validação: {validation[best]:.4f}',
+        f' | MSE treino: {training_mse:.4f} | MSE validação: {validation[best]:.4f}{efficiency}',
         flush=True,
     )
 
@@ -233,7 +314,7 @@ def open_study(folder, config):
 
     import optuna
 
-    optuna.logging.set_verbosity(optuna.logging.ERROR)
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     return optuna.create_study(
         study_name='rul',
@@ -286,22 +367,26 @@ def optimize(
             label = f'[{dataset}/{model}] Trial {trial.number + 1}/{trials} (id {trial.number})'
             print(f'{label} iniciado', flush=True)
             epoch_history = {}
+            training_info = {}
 
             try:
                 params = suggest_params(trial, model)
                 fitted, history = fit_once(
                     data, model, params, (seed + trial.number) % 2**32, epochs, patience, trial,
-                    epoch_history=epoch_history,
+                    epoch_history=epoch_history, training_info=training_info,
                 )
             except optuna.TrialPruned:
-                print_training_summary(label, 'podado', epoch_history, epochs)
+                print_training_summary(label, 'podado', epoch_history, epochs, training_info)
                 raise
             except Exception:
-                print_training_summary(label, 'falhou', epoch_history, epochs)
+                print_training_summary(label, 'falhou', epoch_history, epochs, training_info)
                 raise
+            finally:
+                if training_info:
+                    trial.set_user_attr('training', training_info)
 
             del fitted
-            print_training_summary(label, 'concluído', history, epochs)
+            print_training_summary(label, 'concluído', history, epochs, training_info)
 
             return min(history['val_loss'])
 
@@ -404,8 +489,11 @@ def train_final(data_root, model_root, dataset, model, experiment, seeds, best_t
             write_json(target / 'config.json', final_config)
             label = f'[{dataset}/{model}] Seed {seed}'
             print(f'{label} iniciada', flush=True)
-            model_obj, history = fit_once(data, model, best['params'], seed, epochs, patience)
-            print_training_summary(label, 'concluída', history, epochs)
+            training_info = {}
+            model_obj, history = fit_once(
+                data, model, best['params'], seed, epochs, patience, training_info=training_info,
+            )
+            print_training_summary(label, 'concluída', history, epochs, training_info)
             model_obj.save(target / 'model.keras')
             write_json(target / 'history.json', history)
             plot_history(history, target / 'history.png')
@@ -418,6 +506,7 @@ def train_final(data_root, model_root, dataset, model, experiment, seeds, best_t
                     'experiment': experiment,
                     'seed': seed,
                     'best_validation_mse': min(history['val_loss']),
+                    'training': training_info,
                     'sha256': {
                         name: file_hash(target / name)
                         for name in ('model.keras', 'config.json', 'history.json', 'history.png')

@@ -1,0 +1,17 @@
+# Use Python 3.12 para este ambiente do projeto.
+# No Ubuntu/WSL, inclui as bibliotecas CUDA para usar a GPU.
+# No Windows, instala o TensorFlow para CPU.
+tensorflow[and-cuda]==2.20.0; sys_platform == "linux"
+tensorflow==2.20.0; sys_platform != "linux"
+keras==3.15.0
+
+# Dados, pré-processamento e gráficos.
+numpy==2.2.6
+pandas==2.3.2
+scikit-learn==1.7.1
+joblib==1.5.2
+matplotlib==3.10.6
+
+# Busca de hiperparâmetros e callback de poda dos trials.
+optuna==4.9.0
+optuna-integration[tfkeras]==4.9.0
