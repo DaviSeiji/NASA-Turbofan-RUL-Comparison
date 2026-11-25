@@ -1,0 +1,52 @@
+{
+  "protocol": "rul_training",
+  "record": {
+    "Dataset": "FD004",
+    "Model": "itransformer",
+    "Experiment": "baseline",
+    "Seed": 5,
+    "Protocol": "terminal",
+    "Target": "y_original_uncapped",
+    "PreprocessingManifest": "bbd676ced8ace2001623c6b8e9705557592d4d4b63ec174949b1c5b030df03d2",
+    "ModelSHA256": "dc3a6c420b2be488f01e6b3dd9851171785c6eb6adf5afb792724d47c0b9730e",
+    "TrainingProtocol": {
+      "protocol": "rul_training",
+      "sampler_seed": 42,
+      "total_trials": 30,
+      "epochs": 50,
+      "patience": 5,
+      "final_epochs": 50,
+      "final_patience": 5,
+      "objective": "min_validation_mse",
+      "pruner": "MedianPruner(n_warmup_steps=5)",
+      "training_target": "y_capped_125",
+      "software": {
+        "tensorflow": "2.20.0",
+        "keras": "3.15.0",
+        "optuna": "4.9.0",
+        "optuna-integration": "4.9.0",
+        "numpy": "2.2.6"
+      },
+      "code_sha256": {
+        "train.py": "be10d0722a059a92d1ce64e12ab85e188bfe30b77c39250971bba1fd03ee2607",
+        "experiment.py": "9333294929e610cced9d0dc62d75ec8a11d3300994b0515dad5ac2e7bb45ed77",
+        "model_builders.py": "01925ec77292bfef6453584947357127aafa8d9574b1bb57fe9828b950c54c80",
+        "transformer_layers.py": "0768fbbfabf715174ad792d5f59c7076ebf1c2615b4a4df2089ebf9bda4bc10b",
+        "utils.py": "2f7eb514d9593a31e32fcea6d9bd658c2747967cb67878f4e0a854712feab1ea",
+        "preprocessing.py": "b9e1d21ac62163313b83b9a99b4ef47ba541df7677b1aceed95668f94e94b549",
+        "paths.py": "280af503b05af8020d9eb7a657f75bb44b12387ad5f3be34fc10cbd0593604fc"
+      }
+    },
+    "N": 248,
+    "RMSE": 30.98500412434026,
+    "MAE": 23.64276026333532,
+    "MedianAE": 16.998194694519043,
+    "P95AE": 66.13810157775879,
+    "MaxAE": 84.55504608154297
+  },
+  "sha256": {
+    "predictions.csv": "f605e96b87137b2c696681d22818d956812f00259dbf478b5aa69177e349e717",
+    "predictions.png": "1ee1002b463ced846714dafd0e7e3a00cda61cdb44538c7809563d1388aaf018",
+    "metrics.json": "f896d44016208dee488b8ddde450d3141584cf96affddd38d92ba14a932b2e85"
+  }
+}

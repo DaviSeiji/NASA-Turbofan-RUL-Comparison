@@ -11,7 +11,7 @@ from src.rul_prediction.utils import Config, DEVELOPMENT_SPLITS, file_hash
 DATA_ROOT = ROOT / 'data/processed'
 MODEL_ROOT = ROOT / 'models'
 RESULT_ROOT = ROOT / 'results'
-MODELS = ('cnn_lstm', 'transformer')
+MODELS = ('cnn_lstm', 'transformer', 'tcn', 'itransformer')
 JOIN_KEYS = ['Dataset', 'SourceSplit', 'Split', 'unit_nr', 'start_cycle', 'end_cycle']
 PROTOCOL = 'rul_training'
 

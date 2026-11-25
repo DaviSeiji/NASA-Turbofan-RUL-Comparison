@@ -40,6 +40,55 @@ def build_cnn_lstm(input_shape, params):
     return model
 
 
+# Constrói a TCN com convoluções causais e blocos residuais.
+def build_tcn(input_shape, params):
+
+    blocks = params['num_blocks']
+    kernel = params['kernel_size']
+
+    if blocks < 1 or kernel < 2:
+        raise ValueError('A TCN precisa de blocos positivos e kernel de pelo menos 2.')
+
+    # Cada bloco tem duas convoluções, com dilatações 1, 2, 4, 8...
+    receptive_field = 1 + 2 * (kernel - 1) * (2**blocks - 1)
+
+    if receptive_field < input_shape[0]:
+        raise ValueError('O campo receptivo da TCN precisa cobrir toda a janela.')
+
+    inputs = keras.layers.Input(shape=input_shape)
+    x = inputs
+
+    for index in range(blocks):
+        residual = x
+
+        for _ in range(2):
+            x = keras.layers.Conv1D(
+                params['filters'], kernel, padding='causal', dilation_rate=2**index,
+                activation='relu',
+            )(x)
+            x = keras.layers.SpatialDropout1D(params['dropout_rate'])(x)
+
+        if residual.shape[-1] != params['filters']:
+            residual = keras.layers.Conv1D(params['filters'], 1)(residual)
+
+        x = keras.layers.Add()([residual, x])
+        x = keras.layers.Activation('relu')(x)
+
+    # Usa o último ciclo, que pode receber informação de toda a janela.
+    x = keras.layers.Cropping1D((input_shape[0] - 1, 0))(x)
+    x = keras.layers.Flatten()(x)
+    x = keras.layers.Dense(32, activation='relu')(x)
+    outputs = keras.layers.Dense(1)(x)
+
+    model = keras.Model(inputs, outputs, name='tcn_rul')
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=params['learning_rate']),
+        loss='mse', metrics=['mae'],
+    )
+
+    return model
+
+
 #Função que constroí um bloco de encoder do Transformer.
 def transformer_encoder(inputs, d_model, num_heads, ff_dim, dropout):
 
@@ -85,4 +134,36 @@ def build_transformer(input_shape, params):
     model = keras.Model(inputs, outputs, name='transformer_rul')
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=params['learning_rate']), loss='mse', metrics=['mae'])
     
+    return model
+
+
+# Constrói o iTransformer adaptado para prever um único RUL.
+def build_itransformer(input_shape, params):
+
+    inputs = keras.layers.Input(shape=input_shape)
+
+    # Cada variável vira um token com os 30 valores da sua janela.
+    x = keras.layers.Permute((2, 1), name='variable_tokens')(inputs)
+    x = keras.layers.Dense(params['d_model'], name='variable_projection')(x)
+    x = keras.layers.Dropout(params['dropout_rate'])(x)
+
+    # A atenção relaciona variáveis, sem embedding de posição temporal.
+    for _ in range(params['num_layers']):
+        x = transformer_encoder(
+            x, params['d_model'], params['num_heads'], params['ff_dim'],
+            params['dropout_rate'],
+        )
+
+    x = keras.layers.LayerNormalization(epsilon=1e-6)(x)
+    x = keras.layers.GlobalAveragePooling1D()(x)
+    x = keras.layers.Dense(32, activation='relu')(x)
+    x = keras.layers.Dropout(params['dropout_rate'])(x)
+    outputs = keras.layers.Dense(1)(x)
+
+    model = keras.Model(inputs, outputs, name='itransformer_rul')
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=params['learning_rate']),
+        loss='mse', metrics=['mae'],
+    )
+
     return model

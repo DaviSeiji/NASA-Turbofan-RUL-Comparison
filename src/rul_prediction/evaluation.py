@@ -1,13 +1,36 @@
 import argparse
+import re
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from src.rul_prediction.experiment import (DATA_ROOT, JOIN_KEYS, MODEL_ROOT, MODELS, PROTOCOL, RESULT_ROOT,assert_model_shape, check_output_root, experiment_path, load_data, read_json, write_json,)
+from src.rul_prediction.experiment import (DATA_ROOT, JOIN_KEYS, MODEL_ROOT, MODELS, PROTOCOL, RESULT_ROOT,assert_model_shape, check_output_root, experiment_path, identity, load_data, read_json, write_json,)
 from src.rul_prediction.utils import DATASETS, file_hash
 from src.rul_prediction.models.transformer_layers import PositionalEmbedding 
 import keras
 
 METRICS = ('RMSE', 'MAE', 'MedianAE', 'P95AE', 'MaxAE')
+TRAINING_KEYS = (
+    'protocol', 'sampler_seed', 'total_trials', 'epochs', 'patience',
+    'final_epochs', 'final_patience', 'objective', 'pruner', 'training_target', 'software',
+)
+
+
+# Separa o protocolo comum dos hashes próprios de cada arquitetura.
+def comparable_training_protocol(training):
+
+    if set(training) != set(TRAINING_KEYS) | {'code_sha256'}:
+        raise ValueError('Protocolo de treinamento incompleto.')
+
+    hashes = training['code_sha256']
+    required = {'train.py', 'experiment.py', 'model_builders.py', 'transformer_layers.py'}
+
+    if not isinstance(hashes, dict) or not required <= set(hashes) or any(
+        not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value)
+        for value in hashes.values()
+    ):
+        raise ValueError('Proveniência de código inválida.')
+
+    return {key: training[key] for key in TRAINING_KEYS}
 
 #Nesse arquivo estão as funções de avaliação do modelo, incluindo cálculo de métricas, geração de tabelas de previsão, carregamento de modelos, plotagem de previsões e execução do protocolo de avaliação.
 
@@ -98,6 +121,16 @@ def evaluate(data_root, model_root, result_root, dataset, model, experiment, see
 
         if (config['data'] != provenance or config['model'] != model or config['seed'] != seed or config['experiment'] != experiment):
             raise ValueError('Configuração final inconsistente.')
+
+        study = read_json(parent / 'study_config.json')
+        best = config['best']
+
+        if (
+            any(config.get(key) != value for key, value in study.items())
+            or best['config_sha256'] != identity(study)
+            or best != read_json(parent / f'best_trial_{best["trial"]}.json')
+        ):
+            raise ValueError('Modelo final não corresponde ao estudo e ao campeão salvos.')
         
         if (output / f'seed_{seed}' / protocol).exists():
             raise FileExistsError('Resultado existente será preservado; use outro experimento.')
@@ -120,9 +153,8 @@ def evaluate(data_root, model_root, result_root, dataset, model, experiment, see
         table.to_csv(target / 'predictions.csv', index=False, mode='x')
         plot_predictions(table, target / 'predictions.png')
         model_manifest, config = manifests[seed]
-        training_protocol = {key: config[key] for key in
-                             ('protocol', 'sampler_seed', 'total_trials', 'epochs', 'patience',
-                              'final_epochs', 'final_patience', 'software', 'code_sha256')}
+        training_protocol = {key: config[key] for key in (*TRAINING_KEYS, 'code_sha256')}
+        comparable_training_protocol(training_protocol)
         record = {'Dataset': dataset, 'Model': model, 'Experiment': experiment, 'Seed': seed,
                   'Protocol': protocol, 'Target': 'y_original_uncapped',
                   'PreprocessingManifest': provenance['manifest_sha256'],
@@ -156,6 +188,7 @@ def compare(result_root, datasets, experiment, seeds, protocol, comparison):
         reference = None
 
         for model in MODELS:
+            model_training = None
             for seed in seeds:
 
                 folder = experiment_path(result_root, dataset, model, experiment) / f'seed_{seed}' / protocol
@@ -163,6 +196,9 @@ def compare(result_root, datasets, experiment, seeds, protocol, comparison):
 
                 if manifest['protocol'] != PROTOCOL:
                     raise ValueError('Protocolo de resultados incompatível.')
+
+                if set(manifest['sha256']) != {'metrics.json', 'predictions.csv', 'predictions.png'}:
+                    raise ValueError('Manifesto de avaliação incompleto.')
                 
                 for name in ('metrics.json', 'predictions.csv', 'predictions.png'):
                     if file_hash(folder / name) != manifest['sha256'][name]:
@@ -178,10 +214,17 @@ def compare(result_root, datasets, experiment, seeds, protocol, comparison):
                     raise ValueError('Identidade dos resultados incompatível.')
                 
                 table = pd.read_csv(folder / 'predictions.csv')
-                current = (record['PreprocessingManifest'], record['TrainingProtocol'], table[JOIN_KEYS].to_dict('list'),table.RUL_true.tolist())
+                training = record['TrainingProtocol']
+                common_training = comparable_training_protocol(training)
+
+                if model_training is not None and training != model_training:
+                    raise ValueError('Seeds do mesmo modelo precisam da mesma proveniência de código.')
+
+                model_training = training
+                current = (record['PreprocessingManifest'], common_training, table[JOIN_KEYS].to_dict('list'),table.RUL_true.tolist())
                 
                 if reference is not None and current != reference:
-                    raise ValueError('Comparação exige exatamente o mesmo pré-processamento e janelas.')
+                    raise ValueError('Comparação exige o mesmo protocolo, pré-processamento, janelas e alvos.')
                 
                 reference = current
                 records.append(record)

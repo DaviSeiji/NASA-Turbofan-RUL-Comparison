@@ -1,0 +1,52 @@
+{
+  "protocol": "rul_training",
+  "record": {
+    "Dataset": "FD003",
+    "Model": "itransformer",
+    "Experiment": "baseline",
+    "Seed": 5,
+    "Protocol": "windows",
+    "Target": "y_original_uncapped",
+    "PreprocessingManifest": "7796855255aa381c19527d2101d3e7cf35ec399542ef16c89c1d99ab4d083a32",
+    "ModelSHA256": "c3275beed6d23f73da2866a776915ea3892ff01a622e674f3543495bc0020d8d",
+    "TrainingProtocol": {
+      "protocol": "rul_training",
+      "sampler_seed": 42,
+      "total_trials": 30,
+      "epochs": 50,
+      "patience": 5,
+      "final_epochs": 50,
+      "final_patience": 5,
+      "objective": "min_validation_mse",
+      "pruner": "MedianPruner(n_warmup_steps=5)",
+      "training_target": "y_capped_125",
+      "software": {
+        "tensorflow": "2.20.0",
+        "keras": "3.15.0",
+        "optuna": "4.9.0",
+        "optuna-integration": "4.9.0",
+        "numpy": "2.2.6"
+      },
+      "code_sha256": {
+        "train.py": "be10d0722a059a92d1ce64e12ab85e188bfe30b77c39250971bba1fd03ee2607",
+        "experiment.py": "9333294929e610cced9d0dc62d75ec8a11d3300994b0515dad5ac2e7bb45ed77",
+        "model_builders.py": "01925ec77292bfef6453584947357127aafa8d9574b1bb57fe9828b950c54c80",
+        "transformer_layers.py": "0768fbbfabf715174ad792d5f59c7076ebf1c2615b4a4df2089ebf9bda4bc10b",
+        "utils.py": "2f7eb514d9593a31e32fcea6d9bd658c2747967cb67878f4e0a854712feab1ea",
+        "preprocessing.py": "b9e1d21ac62163313b83b9a99b4ef47ba541df7677b1aceed95668f94e94b549",
+        "paths.py": "280af503b05af8020d9eb7a657f75bb44b12387ad5f3be34fc10cbd0593604fc"
+      }
+    },
+    "N": 13696,
+    "RMSE": 82.29424463549309,
+    "MAE": 54.65121126040886,
+    "MedianAE": 31.568405151367188,
+    "P95AE": 191.76197242736816,
+    "MaxAE": 339.5841751098633
+  },
+  "sha256": {
+    "predictions.csv": "76aabff894d43c90ed82dbcc25b4d71a5727a2f4f8bcea92cea0072f5de01222",
+    "predictions.png": "52eef3bff56a1f05b77cf713153f515d3296bd35cf3c7a97df884d0437617cac",
+    "metrics.json": "73df2f36da3bdfbeaf9374b91add1ce113f59bf1659d1713125ffa1639cf3727"
+  }
+}

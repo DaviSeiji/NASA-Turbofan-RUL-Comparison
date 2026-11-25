@@ -1,0 +1,52 @@
+{
+  "protocol": "rul_training",
+  "record": {
+    "Dataset": "FD002",
+    "Model": "tcn",
+    "Experiment": "baseline",
+    "Seed": 3,
+    "Protocol": "terminal",
+    "Target": "y_original_uncapped",
+    "PreprocessingManifest": "c7bdb1736d184c7f35b43668d129cecb6d61c9274553dc078dd5eccdedac9e54",
+    "ModelSHA256": "9a250bce8b9cdf4b0f72f537c22181749573aca5a4faa172aaeeaac00d108c8f",
+    "TrainingProtocol": {
+      "protocol": "rul_training",
+      "sampler_seed": 42,
+      "total_trials": 30,
+      "epochs": 50,
+      "patience": 5,
+      "final_epochs": 50,
+      "final_patience": 5,
+      "objective": "min_validation_mse",
+      "pruner": "MedianPruner(n_warmup_steps=5)",
+      "training_target": "y_capped_125",
+      "software": {
+        "tensorflow": "2.20.0",
+        "keras": "3.15.0",
+        "optuna": "4.9.0",
+        "optuna-integration": "4.9.0",
+        "numpy": "2.2.6"
+      },
+      "code_sha256": {
+        "train.py": "be10d0722a059a92d1ce64e12ab85e188bfe30b77c39250971bba1fd03ee2607",
+        "experiment.py": "9333294929e610cced9d0dc62d75ec8a11d3300994b0515dad5ac2e7bb45ed77",
+        "model_builders.py": "01925ec77292bfef6453584947357127aafa8d9574b1bb57fe9828b950c54c80",
+        "transformer_layers.py": "0768fbbfabf715174ad792d5f59c7076ebf1c2615b4a4df2089ebf9bda4bc10b",
+        "utils.py": "2f7eb514d9593a31e32fcea6d9bd658c2747967cb67878f4e0a854712feab1ea",
+        "preprocessing.py": "b9e1d21ac62163313b83b9a99b4ef47ba541df7677b1aceed95668f94e94b549",
+        "paths.py": "280af503b05af8020d9eb7a657f75bb44b12387ad5f3be34fc10cbd0593604fc"
+      }
+    },
+    "N": 259,
+    "RMSE": 26.929164362536532,
+    "MAE": 17.976258233707384,
+    "MedianAE": 10.006553649902344,
+    "P95AE": 65.4974739074707,
+    "MaxAE": 98.62224578857422
+  },
+  "sha256": {
+    "predictions.csv": "f15bc1c1e367e2062fd9df1cb71b753273d356d2ea76939dc5fe1bf92cffd0e4",
+    "predictions.png": "0b86d9a6a211d8f5edb794ac5f9d8e687d3669514fa08e34b4227a4351aada21",
+    "metrics.json": "7a5f714d88f4484bf943af0000cfa6f999c3f7bbc40ff38bd549b273051ee3b5"
+  }
+}

@@ -3,6 +3,12 @@ import importlib.metadata
 import logging
 import os
 import platform
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import json
+from contextlib import contextmanager
 from math import prod
 from pathlib import Path
 from time import perf_counter
@@ -35,11 +41,113 @@ from src.rul_prediction.experiment import (
     write_json,
 )
 from src.rul_prediction.utils import DATASETS, file_hash
-from src.rul_prediction.models.model_builders import build_cnn_lstm, build_transformer
+from src.rul_prediction.models.model_builders import (
+    build_cnn_lstm, build_transformer, build_tcn, build_itransformer,
+)
+from src.paths import ROOT
 import tensorflow as tf
 import keras
 
 configure_output()
+
+# Referência imutável do código que produziu os oito estudos antigos.
+BASELINE_COMMIT = '1c677ab3ede8766e59dafc97f4f6b123bf96deea'
+BASELINE_CODE_SHA256 = {
+    'train.py': '4f5d47771465f4877d4510b2efbd6a51276e19a48d6d42a6406cd7ca1f49a8d5',
+    'experiment.py': '993db5acfdef562ae54618cddd7bf807773ddede9cd03e79ee57bb21ee168307',
+    'model_builders.py': 'aadd94a807e9689cb3f40efdee710f0bd4daab13364c6ea584cff683176c4854',
+    'transformer_layers.py': '0768fbbfabf715174ad792d5f59c7076ebf1c2615b4a4df2089ebf9bda4bc10b',
+}
+
+
+# Recupera o código antigo do Git e confere seus bytes antes de usá-lo.
+@contextmanager
+def baseline_source(config):
+
+    if config['model'] not in ('cnn_lstm', 'transformer') or config['code_sha256'] != BASELINE_CODE_SHA256:
+        raise ValueError('O estudo não pertence à referência original das baselines.')
+
+    files = subprocess.check_output(
+        ['git', 'ls-tree', '-r', '--name-only', BASELINE_COMMIT, '--', 'src'],
+        cwd=ROOT, text=True,
+    ).splitlines()
+
+    if not files or any(not name.startswith('src/') or '..' in Path(name).parts for name in files):
+        raise ValueError('Referência de código inválida ou ausente no Git.')
+
+    with tempfile.TemporaryDirectory(prefix='rul-baseline-') as temporary:
+        folder = Path(temporary)
+
+        for name in files:
+            content = subprocess.check_output(['git', 'show', f'{BASELINE_COMMIT}:{name}'], cwd=ROOT)
+
+            # Esse arquivo usava CRLF no checkout original; o Git guardou LF.
+            if name == 'src/rul_prediction/models/transformer_layers.py':
+                content = content.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+
+            target = folder / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+        for name, digest in BASELINE_CODE_SHA256.items():
+            matches = list((folder / 'src').rglob(name))
+
+            if len(matches) != 1 or file_hash(matches[0]) != digest:
+                raise ValueError(f'Código original incompatível: {name}.')
+
+        yield folder
+
+
+# Executa o treino final antigo com o código original e os mesmos dados e saídas.
+def train_baseline_final(config, data_root, model_root, dataset, model, experiment, seeds, best_trial, epochs, patience):
+
+    arguments = {
+        'data_root': str(Path(data_root).resolve()),
+        'model_root': str(Path(model_root).resolve()),
+        'dataset': dataset, 'model': model, 'experiment': experiment,
+        'seeds': seeds, 'best_trial': best_trial, 'epochs': epochs, 'patience': patience,
+    }
+
+    # O subprocesso importa somente o código congelado; as saídas continuam no projeto.
+    bootstrap = (
+        'import sys, json; from pathlib import Path; '
+        'sys.path.insert(0, sys.argv[1]); '
+        'from src import paths; paths.ROOT = Path(sys.argv[2]); '
+        'from src.rul_prediction.train import train_final; '
+        'train_final(**json.loads(sys.argv[3]))'
+    )
+
+    with baseline_source(config) as folder:
+        print(f'[{dataset}/{model}] Código original: commit {BASELINE_COMMIT}', flush=True)
+        subprocess.run(
+            [sys.executable, '-c', bootstrap, str(folder), str(ROOT), json.dumps(arguments)],
+            cwd=folder, check=True,
+        )
+
+
+# Consulta o campeão no banco sem alterar os trials ou seus resultados.
+def best_trial_number(folder):
+
+    config = read_json(Path(folder) / 'study_config.json')
+    database = (Path(folder) / 'study.db').resolve()
+
+    with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
+        trials = connection.execute('SELECT number, state FROM trials').fetchall()
+
+        if len(trials) != config['total_trials'] or any(state in ('RUNNING', 'WAITING') for _, state in trials):
+            raise ValueError('Conclua todos os trials antes do treino final.')
+
+        best = connection.execute(
+            "SELECT t.number FROM trials t JOIN trial_values v ON t.trial_id = v.trial_id "
+            "WHERE t.state = 'COMPLETE' AND v.objective = 0 AND v.value IS NOT NULL "
+            'ORDER BY v.value, t.number LIMIT 1'
+        ).fetchone()
+
+    if best is None:
+        raise ValueError('Não existe trial completo para treino final.')
+
+    return int(best[0])
+
 
 # Escolhe os hiperparâmetros que o Optuna vai testar no modelo.
 def suggest_params(trial, model):
@@ -53,13 +161,21 @@ def suggest_params(trial, model):
             'cnn_layers': trial.suggest_int('cnn_layers', 1, 2),
             'lstm_layers': trial.suggest_int('lstm_layers', 1, 2),
         }
-    else:
+    elif model in ('transformer', 'itransformer'):
         params = {
             'd_model': trial.suggest_categorical('d_model', [32, 64, 128]),
             'num_heads': trial.suggest_categorical('num_heads', [2, 4, 8]),
             'ff_dim': trial.suggest_categorical('ff_dim', [64, 128, 256]),
             'num_layers': trial.suggest_int('num_layers', 1, 3),
         }
+    elif model == 'tcn':
+        params = {
+            'filters': trial.suggest_categorical('filters', [32, 64, 128]),
+            'kernel_size': trial.suggest_categorical('kernel_size', [2, 3, 5]),
+            'num_blocks': trial.suggest_int('num_blocks', 4, 5),
+        }
+    else:
+        raise ValueError('Modelo inválido.')
 
     params.update(
         dropout_rate=trial.suggest_float('dropout_rate', 0.1, 0.4, step=0.1),
@@ -73,7 +189,12 @@ def suggest_params(trial, model):
 # Chama o builder da arquitetura escolhida com os parâmetros recebidos.
 def build_model(model, shape, params):
 
-    return (build_cnn_lstm if model == 'cnn_lstm' else build_transformer)(shape, params)
+    builders = {
+        'cnn_lstm': build_cnn_lstm, 'transformer': build_transformer,
+        'tcn': build_tcn, 'itransformer': build_itransformer,
+    }
+
+    return builders[model](shape, params)
 
 
 # Limpa a sessão e configura a seed e o determinismo do TensorFlow.
@@ -276,6 +397,9 @@ def study_config(provenance, model, experiment, seed, trials, epochs, patience):
                 'experiment.py': Path(__file__).with_name('experiment.py'),
                 'model_builders.py': Path(__file__).parent / 'models/model_builders.py',
                 'transformer_layers.py': Path(__file__).parent / 'models/transformer_layers.py',
+                'utils.py': Path(__file__).with_name('utils.py'),
+                'preprocessing.py': Path(__file__).with_name('preprocessing.py'),
+                'paths.py': Path(__file__).parents[1] / 'paths.py',
             }.items()
         },
     }
@@ -447,12 +571,22 @@ def train_final(data_root, model_root, dataset, model, experiment, seeds, best_t
     if not seeds or len(set(seeds)) != len(seeds) or any(not 0 <= s < 2**32 for s in seeds):
         raise ValueError('Seeds devem ser únicas e uint32.')
 
+    folder = experiment_path(model_root, dataset, model, experiment)
+    config = read_json(folder / 'study_config.json')
+
+    if best_trial is None:
+        best_trial = best_trial_number(folder)
+
     if epochs < 1 or patience < 0 or best_trial < 0:
         raise ValueError('Épocas/trial/patience inválidos.')
 
+    if config['code_sha256'] == BASELINE_CODE_SHA256:
+        return train_baseline_final(
+            config, data_root, model_root, dataset, model, experiment,
+            seeds, best_trial, epochs, patience,
+        )
+
     data, provenance = load_data(Path(data_root) / dataset, ('train', 'validation'))
-    folder = experiment_path(model_root, dataset, model, experiment)
-    config = read_json(folder / 'study_config.json')
     expected = study_config(
         provenance,
         model,
@@ -546,9 +680,8 @@ def main():
             p.add_argument('--seeds', nargs='+', type=int, default=[1, 2, 3, 4, 5])
             p.add_argument(
                 '--best-trial',
-                required=True,
                 type=int,
-                help='Número do snapshot campeão informado pelo optimize.',
+                help='ID do campeão; se omitido, consulta automaticamente o estudo completo.',
             )
 
     args = parser.parse_args()

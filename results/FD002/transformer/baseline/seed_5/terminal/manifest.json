@@ -1,0 +1,49 @@
+{
+  "protocol": "rul_training",
+  "record": {
+    "Dataset": "FD002",
+    "Model": "transformer",
+    "Experiment": "baseline",
+    "Seed": 5,
+    "Protocol": "terminal",
+    "Target": "y_original_uncapped",
+    "PreprocessingManifest": "c7bdb1736d184c7f35b43668d129cecb6d61c9274553dc078dd5eccdedac9e54",
+    "ModelSHA256": "365de71d2cbcb4405784c774e3dc94d3c7ebb65b18010c1ad0389767fe608ea2",
+    "TrainingProtocol": {
+      "protocol": "rul_training",
+      "sampler_seed": 42,
+      "total_trials": 30,
+      "epochs": 50,
+      "patience": 5,
+      "final_epochs": 50,
+      "final_patience": 5,
+      "objective": "min_validation_mse",
+      "pruner": "MedianPruner(n_warmup_steps=5)",
+      "training_target": "y_capped_125",
+      "software": {
+        "tensorflow": "2.20.0",
+        "keras": "3.15.0",
+        "optuna": "4.9.0",
+        "optuna-integration": "4.9.0",
+        "numpy": "2.2.6"
+      },
+      "code_sha256": {
+        "train.py": "4f5d47771465f4877d4510b2efbd6a51276e19a48d6d42a6406cd7ca1f49a8d5",
+        "experiment.py": "993db5acfdef562ae54618cddd7bf807773ddede9cd03e79ee57bb21ee168307",
+        "model_builders.py": "aadd94a807e9689cb3f40efdee710f0bd4daab13364c6ea584cff683176c4854",
+        "transformer_layers.py": "0768fbbfabf715174ad792d5f59c7076ebf1c2615b4a4df2089ebf9bda4bc10b"
+      }
+    },
+    "N": 259,
+    "RMSE": 27.667099948388863,
+    "MAE": 18.524889867738406,
+    "MedianAE": 9.498588562011719,
+    "P95AE": 68.62465286254883,
+    "MaxAE": 93.74398803710938
+  },
+  "sha256": {
+    "predictions.csv": "3a0fe2c5538f6e7889351d7d9e538b4a8ffced6e0220db9803c3dc4fce1cb23c",
+    "predictions.png": "02017fc801b181d95345b025f5f6eeaf8e95c39d22721bb536358842b21e4e38",
+    "metrics.json": "adc85f10839fbb96407b60bec20fdc4c864e23863203ac200e34f179e001ccd1"
+  }
+}
